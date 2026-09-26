@@ -1,0 +1,3 @@
+# Optional. Scripted mode and default tests need only the standard library.
+# SDK request shapes verified locally with this version; no live request was made.
+openai[realtime]==3.19.2
