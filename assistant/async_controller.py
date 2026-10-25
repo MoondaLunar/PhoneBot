@@ -90,7 +90,8 @@ class AsyncSessionController:
                         try:
                             await asyncio.wait_for(self._inflight, timeout=self.event_timeout)
                         except asyncio.TimeoutError:
-                            await self.shutdown(disconnect=True)
+                            self.closed = True
+                            self.generation = uuid4().hex
                             break
                         finally:
                             self._inflight = None
@@ -100,6 +101,13 @@ class AsyncSessionController:
             raise
         finally:
             self.closed = True
+            if self._inflight is not None:
+                try:
+                    await asyncio.shield(self._inflight)
+                except (Exception, asyncio.CancelledError):
+                    pass
+            if self.session.state != State.ENDED:
+                self.session.disconnect()
 
     def _apply(self, event):
         if event.kind is EventKind.REMOTE:
@@ -115,10 +123,13 @@ class AsyncSessionController:
             return
         self.closed = True
         self.generation = uuid4().hex
+        # Thread work is not cancellable. Wait for it to exit before mutating
+        # Session, even if the awaiting task has been cancelled.
         if self._inflight is not None:
-            self._inflight.cancel()
-        # Session may be processing on a worker thread. Wait for it to exit before
-        # changing state, so an old result cannot write into a closed session.
+            try:
+                await asyncio.shield(self._inflight)
+            except (Exception, asyncio.CancelledError):
+                pass
         async with self._lock:
             if self.session.state != State.ENDED:
                 if disconnect:
